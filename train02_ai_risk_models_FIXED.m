@@ -1,11 +1,13 @@
 %% train02_ai_risk_models_FIXED.m
-% Train Random Forest style models for:
+% Trains and compares five supervised ML models for:
 % 1. PCB quality risk prediction
 % 2. Machine maintenance risk prediction
 %
-% This version uses Bagged Decision Trees, which is a Random Forest style model.
-% It also calculates more evaluation metrics:
-% Accuracy, Precision, Recall, F1-score, False Positive Count, False Negative Count.
+% Compared models:
+% Decision Tree, Random Forest, Gradient Boosting, KNN, SVM
+%
+% Selection score:
+% 0.70 * Macro-F1 + 0.30 * High-risk Recall
 
 clear; clc; close all;
 rng(42);   % fixed random seed for reproducibility
@@ -26,7 +28,6 @@ if ~exist(outDir, 'dir')
 end
 
 %% Load dataset
-
 dataFile = fullfile(outDir, 'sensor_features_with_labels_FIXED.mat');
 
 if ~isfile(dataFile)
@@ -36,7 +37,6 @@ end
 load(dataFile, 'T');
 
 %% Define predictors and labels
-
 predictorNames = { ...
     'MeanTempError', ...
     'MaxTempError', ...
@@ -47,285 +47,464 @@ predictorNames = { ...
     'RMSVibration', ...
     'OperatingHours'};
 
+classNames = ["Low", "Medium", "High"];
+
 X = T(:, predictorNames);
 
-Yq = T.QualityRisk;
-Ym = T.MaintenanceRisk;
+Yq = categorical(string(T.QualityRisk), classNames);
+Ym = categorical(string(T.MaintenanceRisk), classNames);
 
-%% Check sample size
+fprintf('\nDataset size: %d samples\n', height(T));
 
-n = height(T);
+%% Model list
+modelNames = [
+    "Decision Tree"
+    "Random Forest"
+    "Gradient Boosting"
+    "KNN"
+    "SVM"
+];
 
-fprintf('\nDataset size: %d samples\n', n);
+%% Evaluate models for Quality Risk
+[trainIdxQ, testIdxQ] = stratifiedHoldout(Yq, 0.30);
 
-if n < 50
-    warning(['The dataset is small. Metrics may be unstable. ', ...
-             'Consider increasing the simulation length or adding more scenarios.']);
+XqTrain = X(trainIdxQ, :);
+XqTest  = X(testIdxQ, :);
+
+YqTrain = Yq(trainIdxQ);
+YqTest  = Yq(testIdxQ);
+
+qualityComparison = table();
+
+qualityModelStore = cell(numel(modelNames), 1);
+qualityPredStore = cell(numel(modelNames), 1);
+qualityMetricsStore = cell(numel(modelNames), 1);
+
+fprintf('\n=== Quality Risk Model Comparison ===\n');
+
+for i = 1:numel(modelNames)
+
+    modelName = modelNames(i);
+
+    try
+        mdl = trainOneModel(modelName, XqTrain, YqTrain, predictorNames);
+        pred = predict(mdl, XqTest);
+
+        metrics = computeMetrics(YqTest, pred, classNames);
+        row = summariseModelPerformance(modelName, YqTest, pred, metrics);
+
+        qualityComparison = [qualityComparison; row]; %#ok<AGROW>
+
+        qualityModelStore{i} = mdl;
+        qualityPredStore{i} = pred;
+        qualityMetricsStore{i} = metrics;
+
+    catch ME
+        warning('Quality model %s failed: %s', modelName, ME.message);
+
+        row = table(string(modelName), NaN, NaN, NaN, NaN, NaN, NaN, NaN, ...
+            'VariableNames', {'Model', 'Accuracy', 'MacroPrecision', ...
+            'MacroRecall', 'MacroF1', 'HighPrecision', 'HighRecall', ...
+            'SelectionScore'});
+
+        qualityComparison = [qualityComparison; row]; %#ok<AGROW>
+    end
 end
 
-%% Train / test split
-% Use a simple 70/30 hold-out split.
-% This gives a more realistic evaluation than testing only on the training data.
+disp(qualityComparison);
 
-idx = randperm(n);
-nTrain = round(0.7 * n);
+%% Evaluate models for Maintenance Risk
+[trainIdxM, testIdxM] = stratifiedHoldout(Ym, 0.30);
 
-trainIdx = idx(1:nTrain);
-testIdx = idx(nTrain+1:end);
+XmTrain = X(trainIdxM, :);
+XmTest  = X(testIdxM, :);
 
-XTrain = X(trainIdx, :);
-XTest  = X(testIdx, :);
+YmTrain = Ym(trainIdxM);
+YmTest  = Ym(testIdxM);
 
-YqTrain = Yq(trainIdx);
-YqTest  = Yq(testIdx);
+maintenanceComparison = table();
 
-YmTrain = Ym(trainIdx);
-YmTest  = Ym(testIdx);
+maintenanceModelStore = cell(numel(modelNames), 1);
+maintenancePredStore = cell(numel(modelNames), 1);
+maintenanceMetricsStore = cell(numel(modelNames), 1);
 
-fprintf('Training samples: %d\n', height(XTrain));
-fprintf('Test samples: %d\n', height(XTest));
+fprintf('\n=== Maintenance Risk Model Comparison ===\n');
 
-%% Train Random Forest style models
-% MATLAB does not use the name "Random Forest" directly here.
-% Bagged Trees with random predictor sampling is commonly used as a Random Forest style model.
+for i = 1:numel(modelNames)
 
-numTrees = 100;
-numPredictorsToSample = max(1, round(sqrt(numel(predictorNames))));
+    modelName = modelNames(i);
 
-treeTemplate = templateTree( ...
-    'MinLeafSize', 1, ...
-    'NumVariablesToSample', numPredictorsToSample);
+    try
+        mdl = trainOneModel(modelName, XmTrain, YmTrain, predictorNames);
+        pred = predict(mdl, XmTest);
 
-qualityModel = fitcensemble(XTrain, YqTrain, ...
-    'Method', 'Bag', ...
-    'NumLearningCycles', numTrees, ...
-    'Learners', treeTemplate);
+        metrics = computeMetrics(YmTest, pred, classNames);
+        row = summariseModelPerformance(modelName, YmTest, pred, metrics);
 
-maintenanceModel = fitcensemble(XTrain, YmTrain, ...
-    'Method', 'Bag', ...
-    'NumLearningCycles', numTrees, ...
-    'Learners', treeTemplate);
+        maintenanceComparison = [maintenanceComparison; row]; %#ok<AGROW>
 
-%% Predict on test data
+        maintenanceModelStore{i} = mdl;
+        maintenancePredStore{i} = pred;
+        maintenanceMetricsStore{i} = metrics;
 
-predQ = predict(qualityModel, XTest);
-predM = predict(maintenanceModel, XTest);
+    catch ME
+        warning('Maintenance model %s failed: %s', modelName, ME.message);
 
-%% Overall accuracy
+        row = table(string(modelName), NaN, NaN, NaN, NaN, NaN, NaN, NaN, ...
+            'VariableNames', {'Model', 'Accuracy', 'MacroPrecision', ...
+            'MacroRecall', 'MacroF1', 'HighPrecision', 'HighRecall', ...
+            'SelectionScore'});
 
-accQ = mean(predQ == YqTest);
-accM = mean(predM == YmTest);
-
-fprintf('\n=== Test Accuracy ===\n');
-fprintf('Quality risk model test accuracy: %.2f%%\n', accQ * 100);
-fprintf('Maintenance risk model test accuracy: %.2f%%\n', accM * 100);
-
-%% More evaluation metrics
-% One-vs-rest metrics are calculated for each class:
-% Low, Medium, High.
-%
-% For predictive maintenance, the High Risk class is especially important,
-% because missed High Risk cases can lead to unplanned downtime.
-
-qualityClassOrder = categories(Yq);
-maintenanceClassOrder = categories(Ym);
-
-qualityMetrics = computeMetrics(YqTest, predQ, qualityClassOrder);
-maintenanceMetrics = computeMetrics(YmTest, predM, maintenanceClassOrder);
-
-fprintf('\n=== Quality Risk Metrics by Class ===\n');
-disp(qualityMetrics);
-
-fprintf('\n=== Maintenance Risk Metrics by Class ===\n');
-disp(maintenanceMetrics);
-
-%% Extract High Risk metrics
-
-fprintf('\n=== High Risk Class Focus ===\n');
-
-highQuality = qualityMetrics(strcmp(string(qualityMetrics.Class), "High"), :);
-highMaintenance = maintenanceMetrics(strcmp(string(maintenanceMetrics.Class), "High"), :);
-
-if ~isempty(highQuality)
-    fprintf('\nQuality Risk - High class:\n');
-    disp(highQuality);
+        maintenanceComparison = [maintenanceComparison; row]; %#ok<AGROW>
+    end
 end
 
-if ~isempty(highMaintenance)
-    fprintf('\nMaintenance Risk - High class:\n');
-    disp(highMaintenance);
+disp(maintenanceComparison);
+
+%% Select best models
+qualityScores = qualityComparison.SelectionScore;
+qualityScores(isnan(qualityScores)) = -Inf;
+
+maintenanceScores = maintenanceComparison.SelectionScore;
+maintenanceScores(isnan(maintenanceScores)) = -Inf;
+
+if all(isinf(qualityScores))
+    error('All quality risk models failed. Please check toolbox availability and input data.');
 end
 
-%% Save trained models
-% The file name stays the same, so run03_ai_prediction_demo_FIXED.m can still load it.
+if all(isinf(maintenanceScores))
+    error('All maintenance risk models failed. Please check toolbox availability and input data.');
+end
 
+[~, bestQIdx] = max(qualityScores);
+[~, bestMIdx] = max(maintenanceScores);
+
+qualityModelName = qualityComparison.Model(bestQIdx);
+maintenanceModelName = maintenanceComparison.Model(bestMIdx);
+
+fprintf('\nSelected Quality Risk model: %s\n', qualityModelName);
+fprintf('Selected Maintenance Risk model: %s\n', maintenanceModelName);
+
+%% Train final selected models on the full dataset
+qualityModel = trainOneModel(qualityModelName, X, Yq, predictorNames);
+maintenanceModel = trainOneModel(maintenanceModelName, X, Ym, predictorNames);
+
+%% Save selected models
 save(fullfile(outDir, 'trained_risk_models_FIXED.mat'), ...
     'qualityModel', ...
     'maintenanceModel', ...
-    'predictorNames');
+    'predictorNames', ...
+    'qualityModelName', ...
+    'maintenanceModelName', ...
+    'qualityComparison', ...
+    'maintenanceComparison');
 
-%% Save metric tables
+%% Save model comparison tables
+writetable(qualityComparison, fullfile(outDir, 'quality_model_comparison_FIXED.csv'));
+writetable(maintenanceComparison, fullfile(outDir, 'maintenance_model_comparison_FIXED.csv'));
 
-writetable(qualityMetrics, fullfile(outDir, 'quality_metrics_RANDOM_FOREST.csv'));
-writetable(maintenanceMetrics, fullfile(outDir, 'maintenance_metrics_RANDOM_FOREST.csv'));
+%% Save selected model metrics
+bestQPred = qualityPredStore{bestQIdx};
+bestMPred = maintenancePredStore{bestMIdx};
 
-summaryTable = table(accQ, accM, numTrees, numPredictorsToSample, ...
-    'VariableNames', { ...
-    'QualityRiskAccuracy', ...
-    'MaintenanceRiskAccuracy', ...
-    'NumberOfTrees', ...
-    'NumPredictorsToSample'});
+qualityMetrics = qualityMetricsStore{bestQIdx};
+maintenanceMetrics = maintenanceMetricsStore{bestMIdx};
 
-writetable(summaryTable, fullfile(outDir, 'model_accuracy_summary_FIXED.csv'));
+writetable(qualityMetrics, fullfile(outDir, 'quality_metrics_BEST_MODEL.csv'));
+writetable(maintenanceMetrics, fullfile(outDir, 'maintenance_metrics_BEST_MODEL.csv'));
 
-%% Confusion matrix for quality risk
-
+%% Confusion charts for selected models
 fig1 = figure('Name', 'Quality Risk Confusion Matrix');
-
-confusionchart(YqTest, predQ);
-title('Quality Risk Prediction Confusion Matrix - Random Forest');
-
+confusionchart(YqTest, bestQPred);
+title(['Quality Risk Confusion Matrix - ' char(qualityModelName)]);
 saveas(fig1, fullfile(outDir, 'quality_confusion_FIXED.png'));
 
-%% Confusion matrix for maintenance risk
-
 fig2 = figure('Name', 'Maintenance Risk Confusion Matrix');
-
-confusionchart(YmTest, predM);
-title('Maintenance Risk Prediction Confusion Matrix - Random Forest');
-
+confusionchart(YmTest, bestMPred);
+title(['Maintenance Risk Confusion Matrix - ' char(maintenanceModelName)]);
 saveas(fig2, fullfile(outDir, 'maintenance_confusion_FIXED.png'));
 
-%% Feature importance
-
-qualityImportance = predictorImportance(qualityModel);
-maintenanceImportance = predictorImportance(maintenanceModel);
-
-fig3 = figure('Name', 'Quality Risk Feature Importance');
-
-bar(qualityImportance);
-set(gca, 'XTick', 1:numel(predictorNames));
-set(gca, 'XTickLabel', predictorNames);
-set(gca, 'XTickLabelRotation', 45);
-ylabel('Importance');
-title('Feature Importance - Quality Risk Model');
-grid on;
-
-saveas(fig3, fullfile(outDir, 'quality_feature_importance_FIXED.png'));
-
-fig4 = figure('Name', 'Maintenance Risk Feature Importance');
-
-bar(maintenanceImportance);
-set(gca, 'XTick', 1:numel(predictorNames));
-set(gca, 'XTickLabel', predictorNames);
-set(gca, 'XTickLabelRotation', 45);
-ylabel('Importance');
-title('Feature Importance - Maintenance Risk Model');
-grid on;
-
-saveas(fig4, fullfile(outDir, 'maintenance_feature_importance_FIXED.png'));
-
-%% Precision / Recall / F1 bar charts
-
-fig5 = figure('Name', 'Quality Risk Metrics');
-
+%% Metrics bar charts for selected models
+fig3 = figure('Name', 'Quality Risk Metrics');
 bar(categorical(string(qualityMetrics.Class)), ...
     [qualityMetrics.Precision, qualityMetrics.Recall, qualityMetrics.F1Score]);
-
 ylim([0 1]);
 ylabel('Score');
-title('Quality Risk Metrics by Class');
+title(['Quality Risk Metrics - ' char(qualityModelName)]);
 legend({'Precision', 'Recall', 'F1-score'}, 'Location', 'best');
 grid on;
+saveas(fig3, fullfile(outDir, 'quality_metrics_bar_FIXED.png'));
 
-saveas(fig5, fullfile(outDir, 'quality_metrics_bar_RANDOM_FOREST.png'));
-
-fig6 = figure('Name', 'Maintenance Risk Metrics');
-
+fig4 = figure('Name', 'Maintenance Risk Metrics');
 bar(categorical(string(maintenanceMetrics.Class)), ...
     [maintenanceMetrics.Precision, maintenanceMetrics.Recall, maintenanceMetrics.F1Score]);
-
 ylim([0 1]);
 ylabel('Score');
-title('Maintenance Risk Metrics by Class');
+title(['Maintenance Risk Metrics - ' char(maintenanceModelName)]);
 legend({'Precision', 'Recall', 'F1-score'}, 'Location', 'best');
 grid on;
+saveas(fig4, fullfile(outDir, 'maintenance_metrics_bar_FIXED.png'));
 
-saveas(fig6, fullfile(outDir, 'maintenance_metrics_bar_RANDOM_FOREST.png'));
+%% Model comparison bar charts
+fig5 = figure('Name', 'Quality Model Comparison');
+bar(categorical(string(qualityComparison.Model)), qualityComparison.SelectionScore);
+ylabel('Selection Score');
+title('Quality Risk Model Comparison');
+grid on;
+saveas(fig5, fullfile(outDir, 'quality_model_comparison_FIXED.png'));
+
+fig6 = figure('Name', 'Maintenance Model Comparison');
+bar(categorical(string(maintenanceComparison.Model)), maintenanceComparison.SelectionScore);
+ylabel('Selection Score');
+title('Maintenance Risk Model Comparison');
+grid on;
+saveas(fig6, fullfile(outDir, 'maintenance_model_comparison_FIXED.png'));
+
+%% Feature importance for selected models
+% Permutation importance is used, so it works for tree models, KNN and SVM.
+qualityImportanceTable = permutationImportance( ...
+    qualityModelStore{bestQIdx}, XqTest, YqTest, predictorNames);
+
+maintenanceImportanceTable = permutationImportance( ...
+    maintenanceModelStore{bestMIdx}, XmTest, YmTest, predictorNames);
+
+writetable(qualityImportanceTable, fullfile(outDir, 'quality_feature_importance_FIXED.csv'));
+writetable(maintenanceImportanceTable, fullfile(outDir, 'maintenance_feature_importance_FIXED.csv'));
+
+fig7 = figure('Name', 'Quality Risk Feature Importance');
+bar(qualityImportanceTable.Importance);
+set(gca, 'XTick', 1:numel(predictorNames));
+set(gca, 'XTickLabel', qualityImportanceTable.Feature);
+set(gca, 'XTickLabelRotation', 45);
+ylabel('Permutation Importance');
+title(['Feature Importance - Quality Risk - ' char(qualityModelName)]);
+grid on;
+saveas(fig7, fullfile(outDir, 'quality_feature_importance_FIXED.png'));
+
+fig8 = figure('Name', 'Maintenance Risk Feature Importance');
+bar(maintenanceImportanceTable.Importance);
+set(gca, 'XTick', 1:numel(predictorNames));
+set(gca, 'XTickLabel', maintenanceImportanceTable.Feature);
+set(gca, 'XTickLabelRotation', 45);
+ylabel('Permutation Importance');
+title(['Feature Importance - Maintenance Risk - ' char(maintenanceModelName)]);
+grid on;
+saveas(fig8, fullfile(outDir, 'maintenance_feature_importance_FIXED.png'));
 
 %% Display output file locations
-
 disp(' ');
-disp('Saved Random Forest models and evaluation outputs in outputs folder.');
+disp('Saved selected models, model comparison results, metrics, confusion matrices and feature importance outputs.');
 disp('Key output files:');
 disp(fullfile(outDir, 'trained_risk_models_FIXED.mat'));
+disp(fullfile(outDir, 'quality_model_comparison_FIXED.csv'));
+disp(fullfile(outDir, 'maintenance_model_comparison_FIXED.csv'));
 disp(fullfile(outDir, 'quality_confusion_FIXED.png'));
 disp(fullfile(outDir, 'maintenance_confusion_FIXED.png'));
-disp(fullfile(outDir, 'quality_metrics_RANDOM_FOREST.csv'));
-disp(fullfile(outDir, 'maintenance_metrics_RANDOM_FOREST.csv'));
 disp(fullfile(outDir, 'quality_feature_importance_FIXED.png'));
 disp(fullfile(outDir, 'maintenance_feature_importance_FIXED.png'));
 
-%% Local function: calculate one-vs-rest classification metrics
+%% Local function: train one model
+function mdl = trainOneModel(modelName, XTrain, YTrain, predictorNames)
 
-function metricsTable = computeMetrics(yTrue, yPred, classOrder)
+    p = numel(predictorNames);
 
-    yTrue = categorical(yTrue);
-    yPred = categorical(yPred);
+    switch char(modelName)
 
-    numClasses = numel(classOrder);
+        case 'Decision Tree'
+            mdl = fitctree(XTrain, YTrain, ...
+                'MinLeafSize', 5, ...
+                'MaxNumSplits', 30);
 
-    Class = strings(numClasses, 1);
-    TP = zeros(numClasses, 1);
-    FP = zeros(numClasses, 1);
-    FN = zeros(numClasses, 1);
-    TN = zeros(numClasses, 1);
+        case 'Random Forest'
+            numTrees = 150;
+            numPredictorsToSample = max(1, ceil(sqrt(p)));
 
-    Precision = zeros(numClasses, 1);
-    Recall = zeros(numClasses, 1);
-    F1Score = zeros(numClasses, 1);
-    FalsePositiveCount = zeros(numClasses, 1);
-    FalseNegativeCount = zeros(numClasses, 1);
+            treeTemplate = templateTree( ...
+                'MinLeafSize', 3, ...
+                'MaxNumSplits', 60, ...
+                'NumVariablesToSample', numPredictorsToSample);
 
-    for i = 1:numClasses
+            mdl = fitcensemble(XTrain, YTrain, ...
+                'Method', 'Bag', ...
+                'NumLearningCycles', numTrees, ...
+                'Learners', treeTemplate);
 
-        currentClass = categorical(classOrder(i));
+        case 'Gradient Boosting'
+            treeTemplate = templateTree( ...
+                'MinLeafSize', 5, ...
+                'MaxNumSplits', 20);
 
-        Class(i) = string(classOrder(i));
+            mdl = fitcensemble(XTrain, YTrain, ...
+                'Method', 'AdaBoostM2', ...
+                'NumLearningCycles', 100, ...
+                'LearnRate', 0.1, ...
+                'Learners', treeTemplate);
 
-        TP(i) = sum(yPred == currentClass & yTrue == currentClass);
-        FP(i) = sum(yPred == currentClass & yTrue ~= currentClass);
-        FN(i) = sum(yPred ~= currentClass & yTrue == currentClass);
-        TN(i) = sum(yPred ~= currentClass & yTrue ~= currentClass);
+        case 'KNN'
+            mdl = fitcknn(XTrain, YTrain, ...
+                'NumNeighbors', 5, ...
+                'Distance', 'euclidean', ...
+                'Standardize', true);
 
-        FalsePositiveCount(i) = FP(i);
-        FalseNegativeCount(i) = FN(i);
+        case 'SVM'
+            svmTemplate = templateSVM( ...
+                'KernelFunction', 'rbf', ...
+                'KernelScale', 'auto', ...
+                'BoxConstraint', 1, ...
+                'Standardize', true);
+
+            mdl = fitcecoc(XTrain, YTrain, ...
+                'Learners', svmTemplate, ...
+                'Coding', 'onevsone');
+
+        otherwise
+            error('Unknown model name: %s', modelName);
+    end
+end
+
+%% Local function: stratified holdout split
+function [trainIdx, testIdx] = stratifiedHoldout(Y, testRatio)
+
+    Ystr = string(Y);
+    classes = unique(Ystr);
+
+    trainIdx = [];
+    testIdx = [];
+
+    for i = 1:numel(classes)
+        idx = find(Ystr == classes(i));
+        idx = idx(randperm(numel(idx)));
+
+        if numel(idx) <= 1
+            trainIdx = [trainIdx; idx]; %#ok<AGROW>
+        else
+            nTest = round(testRatio * numel(idx));
+            nTest = max(1, nTest);
+            nTest = min(nTest, numel(idx)-1);
+
+            testIdx = [testIdx; idx(1:nTest)]; %#ok<AGROW>
+            trainIdx = [trainIdx; idx(nTest+1:end)]; %#ok<AGROW>
+        end
+    end
+
+    trainIdx = trainIdx(randperm(numel(trainIdx)));
+    testIdx = testIdx(randperm(numel(testIdx)));
+end
+
+%% Local function: summarise model performance
+function row = summariseModelPerformance(modelName, yTrue, yPred, metrics)
+
+    accuracy = mean(string(yTrue) == string(yPred));
+
+    macroPrecision = mean(metrics.Precision);
+    macroRecall = mean(metrics.Recall);
+    macroF1 = mean(metrics.F1Score);
+
+    highRow = metrics(metrics.Class == "High", :);
+
+    if isempty(highRow)
+        highPrecision = 0;
+        highRecall = 0;
+    else
+        highPrecision = highRow.Precision;
+        highRecall = highRow.Recall;
+    end
+
+    selectionScore = 0.70 * macroF1 + 0.30 * highRecall;
+
+    row = table(string(modelName), accuracy, macroPrecision, macroRecall, ...
+        macroF1, highPrecision, highRecall, selectionScore, ...
+        'VariableNames', {'Model', 'Accuracy', 'MacroPrecision', ...
+        'MacroRecall', 'MacroF1', 'HighPrecision', 'HighRecall', ...
+        'SelectionScore'});
+end
+
+%% Local function: calculate metrics
+function metricsTable = computeMetrics(yTrue, yPred, classNames)
+
+    yTrue = string(yTrue);
+    yPred = string(yPred);
+
+    nClass = numel(classNames);
+
+    Class = strings(nClass, 1);
+    TP = zeros(nClass, 1);
+    FP = zeros(nClass, 1);
+    FN = zeros(nClass, 1);
+    TN = zeros(nClass, 1);
+
+    Precision = zeros(nClass, 1);
+    Recall = zeros(nClass, 1);
+    F1Score = zeros(nClass, 1);
+    FalsePositiveCount = zeros(nClass, 1);
+    FalseNegativeCount = zeros(nClass, 1);
+
+    for i = 1:nClass
+        cls = string(classNames(i));
+        Class(i) = cls;
+
+        TP(i) = sum(yPred == cls & yTrue == cls);
+        FP(i) = sum(yPred == cls & yTrue ~= cls);
+        FN(i) = sum(yPred ~= cls & yTrue == cls);
+        TN(i) = sum(yPred ~= cls & yTrue ~= cls);
 
         Precision(i) = safeDivide(TP(i), TP(i) + FP(i));
         Recall(i) = safeDivide(TP(i), TP(i) + FN(i));
         F1Score(i) = safeDivide(2 * Precision(i) * Recall(i), Precision(i) + Recall(i));
+
+        FalsePositiveCount(i) = FP(i);
+        FalseNegativeCount(i) = FN(i);
     end
 
-    metricsTable = table( ...
-        Class, ...
-        TP, ...
-        FP, ...
-        FN, ...
-        TN, ...
-        Precision, ...
-        Recall, ...
-        F1Score, ...
-        FalsePositiveCount, ...
-        FalseNegativeCount);
+    metricsTable = table(Class, TP, FP, FN, TN, Precision, Recall, ...
+        F1Score, FalsePositiveCount, FalseNegativeCount);
+end
+
+%% Local function: permutation feature importance
+function importanceTable = permutationImportance(mdl, XTest, YTest, predictorNames)
+
+    rng(42);
+
+    baselinePred = predict(mdl, XTest);
+    baselineAcc = mean(string(baselinePred) == string(YTest));
+
+    nFeatures = numel(predictorNames);
+    importance = zeros(nFeatures, 1);
+
+    nRepeats = 5;
+
+    for j = 1:nFeatures
+
+        scoreDrop = zeros(nRepeats, 1);
+
+        for r = 1:nRepeats
+            XPerm = XTest;
+            colName = predictorNames{j};
+
+            shuffledValues = XPerm.(colName);
+            shuffledValues = shuffledValues(randperm(height(XPerm)));
+
+            XPerm.(colName) = shuffledValues;
+
+            permPred = predict(mdl, XPerm);
+            permAcc = mean(string(permPred) == string(YTest));
+
+            scoreDrop(r) = baselineAcc - permAcc;
+        end
+
+        importance(j) = max(mean(scoreDrop), 0);
+    end
+
+    importanceTable = table(string(predictorNames(:)), importance, ...
+        'VariableNames', {'Feature', 'Importance'});
 end
 
 %% Local function: safe division
+function value = safeDivide(a, b)
 
-function value = safeDivide(numerator, denominator)
-
-    if denominator == 0
+    if b == 0
         value = 0;
     else
-        value = numerator / denominator;
+        value = a / b;
     end
 end

@@ -38,7 +38,7 @@ end
 
 %% Create input time series for Simulink
 % One simplified reflow cycle is 120 seconds.
-% Ten cycles are used to increase sample size for AI feature extraction.
+% Twenty cycles are used to increase sample size for AI feature extraction.
 
 cycleTime = 120;
 numCycles = 20; 

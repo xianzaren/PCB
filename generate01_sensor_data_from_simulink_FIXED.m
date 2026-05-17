@@ -2,6 +2,7 @@
 % Runs the Simulink model, extracts signals, creates features and synthetic labels.
 
 clear; clc; close all;
+rng(42);   % fixed random seed for reproducibility
 
 %% Path setup
 projectRoot = fileparts(mfilename('fullpath'));
