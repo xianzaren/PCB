@@ -1,0 +1,2 @@
+MeanTempError,MaxTempError,TempFluctuation,AvgHeaterPower,AvgConveyorSpeed,PeakMotorCurrent,RMSVibration,OperatingHours,PredictedQualityRisk,PredictedMaintenanceRisk,BinaryQualityWarning,BinaryMaintenanceWarning
+10,22,6,70,0.86,3.05,0.21,560,Low,Low,Low,Low

@@ -1,0 +1,5 @@
+CaseName,MeanTempError,MaxTempError,TempFluctuation,AvgHeaterPower,AvgConveyorSpeed,PeakMotorCurrent,RMSVibration,OperatingHours,PredictedQualityRisk,PredictedMaintenanceRisk
+Normal operation,8,15,5,55,0.85,2.8,0.18,502,Low,Low
+Quality risk condition,25,40,16,65,0.85,2.8,0.18,502,Low,Low
+Maintenance risk condition,8,15,5,88,0.85,3.2,0.24,512,Low,High
+Combined high-risk condition,25,38,15,88,0.82,3.2,0.24,512,Low,High
