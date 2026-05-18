@@ -309,3 +309,5 @@ function printRecommendedActions(qualityRisk, maintenanceRisk)
         fprintf('- Maintenance risk is LOW: no immediate maintenance action is needed.\n');
     end
 end
+
+disp('All training finished')

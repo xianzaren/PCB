@@ -11,8 +11,14 @@ if isempty(projectRoot)
 end
 cd(projectRoot);
 outDir = fullfile(projectRoot, 'outputs');
+dashboardDir = fullfile(projectRoot, 'dashboard_data');
+
 if ~exist(outDir, 'dir')
     mkdir(outDir);
+end
+
+if ~exist(dashboardDir, 'dir')
+    mkdir(dashboardDir);
 end
 
 %% Model setup
@@ -132,6 +138,79 @@ disp(labelDistribution);
 writetable(labelDistribution, fullfile(outDir, 'label_distribution_FIXED.csv'));
 
 %% Save dataset
+%% Create dashboard holdout data
+% These rows are saved for dashboard demonstration only.
+% They are removed from T before T is saved for model training/testing.
+
+dashboardRows = 50;
+
+if height(T) <= dashboardRows + 10
+    warning('Dataset is too small to create a separate dashboard holdout set. No rows are removed.');
+    dashboardHoldout = table();
+else
+    % Select varied rows across QualityRisk and MaintenanceRisk combinations.
+    riskPair = string(T.QualityRisk) + "_" + string(T.MaintenanceRisk);
+    riskPairs = unique(riskPair, 'stable');
+
+    selectedIdx = [];
+
+    while numel(selectedIdx) < dashboardRows
+        addedThisRound = false;
+
+        for k = 1:numel(riskPairs)
+            idx = find(riskPair == riskPairs(k));
+            availableIdx = setdiff(idx, selectedIdx);
+
+            if ~isempty(availableIdx)
+                pick = availableIdx(randi(numel(availableIdx)));
+                selectedIdx(end+1, 1) = pick; %#ok<SAGROW>
+                addedThisRound = true;
+            end
+
+            if numel(selectedIdx) >= dashboardRows
+                break;
+            end
+        end
+
+        if ~addedThisRound
+            break;
+        end
+    end
+
+    % If there are still fewer than 50 rows, fill randomly.
+    if numel(selectedIdx) < dashboardRows
+        remainingIdx = setdiff((1:height(T))', selectedIdx);
+        remainingIdx = remainingIdx(randperm(numel(remainingIdx)));
+
+        need = dashboardRows - numel(selectedIdx);
+        selectedIdx = [selectedIdx; remainingIdx(1:min(need, numel(remainingIdx)))]; %#ok<AGROW>
+    end
+
+    selectedIdx = selectedIdx(1:min(dashboardRows, numel(selectedIdx)));
+
+    dashboardHoldout = T(selectedIdx, :);
+    dashboardHoldout.TimeStep = (1:height(dashboardHoldout))';
+    dashboardHoldout = movevars(dashboardHoldout, 'TimeStep', 'Before', 1);
+
+    % Remove dashboard holdout rows from training/testing dataset.
+    T(selectedIdx, :) = [];
+
+    dashboardFile = fullfile(dashboardDir, 'dashboard_50row_holdout_FIXED.csv');
+    writetable(dashboardHoldout, dashboardFile);
+
+    fprintf('\nCreated dashboard holdout CSV:\n%s\n', dashboardFile);
+    fprintf('Dashboard holdout rows: %d\n', height(dashboardHoldout));
+
+    disp('Dashboard Quality Risk distribution:');
+    disp(countcats(categorical(dashboardHoldout.QualityRisk, ["Low", "Medium", "High"])));
+
+    disp('Dashboard Maintenance Risk distribution:');
+    disp(countcats(categorical(dashboardHoldout.MaintenanceRisk, ["Low", "Medium", "High"])));
+end
+
+fprintf('\nFinal training/testing dataset size after removing dashboard holdout: %d samples\n', height(T));
+
+%% Save dataset for model training/testing
 writetable(T, fullfile(outDir, 'sensor_features_with_labels_FIXED.csv'));
 save(fullfile(outDir, 'sensor_features_with_labels_FIXED.mat'), 'T');
 
@@ -190,3 +269,5 @@ labels(order(1:nLow)) = "Low";
 labels(order(nLow+1:nLow+nMedium)) = "Medium";
 labels(order(nLow+nMedium+1:end)) = "High";
 end
+
+disp('Next run: 02.m');
