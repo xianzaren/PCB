@@ -39,6 +39,9 @@ run04_dashboard_sxy_version
 4. `run03_ai_prediction_demo_FIXED.m`
    - Runs one example risk prediction.
    - Prints recommended engineering actions.
+  
+5. `run04_dashboard_sxy_version.m`
+   - Dahsboard
 
 ## Important note
 The dataset is scenario-based synthetic sensor data. It is used for a proof-of-concept demo, not for real industrial deployment.
