@@ -16,6 +16,7 @@ create00_reflow_oven_simulink_model_FIXED
 generate01_sensor_data_from_simulink_FIXED
 train02_ai_risk_models_FIXED
 run03_ai_prediction_demo_FIXED
+run04_dashboard_sxy_version
 ```
 
 ## What each script does
