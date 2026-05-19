@@ -135,20 +135,42 @@ disp('=== Summary Table ===');
 disp(resultTable);
 
 %% Create risk result plot for all cases
-fig = figure('Name', 'AI Risk Prediction Result for Multiple Conditions');
+fig = figure('Name', 'AI Risk Prediction Result for Multiple Conditions', 'Visible', 'off');
+
+% Make figure larger for PPT
+set(fig, 'Position', [100 100 1500 850]);
 
 caseCats = categorical(caseNames);
 caseCats = reordercats(caseCats, cellstr(caseNames));
 
 bar(caseCats, riskScores);
 
-ylim([0 3]);
-ylabel('Risk Level: 1 = Low, 2 = Medium, 3 = High');
-title('AI Risk Prediction Result for Multiple Conditions');
-legend({'Quality Risk', 'Maintenance Risk'}, 'Location', 'best');
+ylim([0 3.2]);
+yticks([1 2 3]);
+yticklabels({'Low','Medium','High'});
+
+ylabel('Risk Level: 1 = Low, 2 = Medium, 3 = High', ...
+    'FontSize', 20, 'FontWeight', 'bold');
+
+title('AI Risk Prediction Result for Multiple Conditions', ...
+    'FontSize', 24, 'FontWeight', 'bold');
+
+legend({'Quality Risk', 'Maintenance Risk'}, ...
+    'Location', 'best', ...
+    'FontSize', 18);
+
 grid on;
 
-saveas(fig, fullfile(outDir, 'ai_risk_prediction_result_FIXED.png'));
+ax = gca;
+ax.FontSize = 18;        % This controls the case name font size
+ax.LineWidth = 1.2;
+
+xtickangle(25);
+
+exportgraphics(fig, fullfile(outDir, 'ai_risk_prediction_result_FIXED.png'), ...
+    'Resolution', 300);
+
+close(fig);
 
 disp(' ');
 disp('Saved demo prediction outputs:');
